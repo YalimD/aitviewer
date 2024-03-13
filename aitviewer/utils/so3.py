@@ -54,6 +54,21 @@ def aa2rot_numpy(rotation_vectors):
     return rotation_matrices
 
 
+def quat2rot_numpy(quaternion_vectors):
+    """
+    Convert quaternions (XYZW) to rotation matrices.
+    :param quaternion_vectors: A numpy array of shape (..., 4).
+    :return: A numpy array of shape (..., 3, 3).
+    """
+    assert isinstance(quaternion_vectors, np.ndarray)
+    ori_shape = quaternion_vectors.shape[:-1]
+    rot = np.reshape(rotation_vectors, (-1, 3))
+    quat = np.c_[rot, np.zeros(rot.shape[0])]
+    rots = R.as_matrix(R.from_quat(quat))
+    rotation_matrices = np.reshape(rots, ori_shape + (3, 3))
+    return rotation_matrices
+
+
 def euler2aa_numpy(euler_angles, degrees=False):
     """
     Convert euler angles (XYZ order) to rotation vectors (angle-axis representation)

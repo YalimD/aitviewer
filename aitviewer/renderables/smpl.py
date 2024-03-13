@@ -42,6 +42,9 @@ class SMPLSequence(Node):
         trans=None,
         poses_left_hand=None,
         poses_right_hand=None,
+        poses_jaw=None,
+        poses_leye=None,
+        poses_reye=None,
         device=None,
         dtype=None,
         include_root=True,
@@ -102,6 +105,9 @@ class SMPLSequence(Node):
         self.poses_body = to_torch(poses_body, dtype=dtype, device=device)
         self.poses_left_hand = to_torch(poses_left_hand, dtype=dtype, device=device)
         self.poses_right_hand = to_torch(poses_right_hand, dtype=dtype, device=device)
+        self.poses_jaw = to_torch(poses_jaw, dtype=dtype, device=device)
+        self.poses_leye = to_torch(poses_leye, dtype=dtype, device=device)
+        self.poses_reye = to_torch(poses_reye, dtype=dtype, device=device)
 
         poses_root = poses_root if poses_root is not None else torch.zeros([len(poses_body), 3])
         betas = betas if betas is not None else torch.zeros([1, self.smpl_layer.num_betas])
@@ -196,13 +202,15 @@ class SMPLSequence(Node):
         log=True,
         fps_out=None,
         z_up=True,
+        load_face=True,
         **kwargs,
     ):
         """Load a sequence downloaded from the AMASS website."""
 
         body_data = np.load(npz_data_path)
         if smpl_layer is None:
-            smpl_layer = SMPLLayer(model_type="smplh", gender=body_data["gender"].item(), device=C.device)
+            smpl_layer = SMPLLayer(model_type="smplx", gender=body_data["gender"].item(), device=C.device,
+                                   num_betas=body_data["betas"].shape[0])
 
         if log:
             print("Data keys available: {}".format(list(body_data.keys())))
@@ -210,7 +218,7 @@ class SMPLSequence(Node):
             print("{:>6d} trans of size {:>4d}.".format(body_data["trans"].shape[0], body_data["trans"].shape[1]))
             print("{:>6d} shape of size {:>4d}.".format(1, body_data["betas"].shape[0]))
             print("Gender {}".format(body_data["gender"]))
-            print("FPS {}".format(body_data["mocap_framerate"]))
+            print("FPS {}".format(body_data["mocap_frame_rate"]))
 
         sf = start_frame or 0
         ef = end_frame or body_data["poses"].shape[0]
@@ -218,7 +226,7 @@ class SMPLSequence(Node):
         trans = body_data["trans"][sf:ef]
 
         if fps_out is not None:
-            fps_in = body_data["mocap_framerate"].tolist()
+            fps_in = body_data["mocap_frame_rate"].tolist()
             if fps_in != fps_out:
                 ps = np.reshape(poses, [poses.shape[0], -1, 3])
                 ps_new = resample_rotations(ps, fps_in, fps_out)
@@ -227,13 +235,19 @@ class SMPLSequence(Node):
 
         i_root_end = 3
         i_body_end = i_root_end + smpl_layer.bm.NUM_BODY_JOINTS * 3
-        i_left_hand_end = i_body_end + smpl_layer.bm.NUM_HAND_JOINTS * 3
+        i_jaw_end = i_body_end + 3
+        i_leye_end = i_jaw_end + 3
+        i_reye_end = i_leye_end + 3
+        i_left_hand_end = i_reye_end + smpl_layer.bm.NUM_HAND_JOINTS * 3
         i_right_hand_end = i_left_hand_end + smpl_layer.bm.NUM_HAND_JOINTS * 3
 
         return cls(
             poses_body=poses[:, i_root_end:i_body_end],
             poses_root=poses[:, :i_root_end],
-            poses_left_hand=poses[:, i_body_end:i_left_hand_end],
+            poses_jaw=poses[:, i_body_end:i_jaw_end] if load_face else None,
+            poses_leye=poses[:, i_jaw_end:i_leye_end] if load_face else None,
+            poses_reye=poses[:, i_leye_end:i_reye_end] if load_face else None,
+            poses_left_hand=poses[:, i_reye_end: i_left_hand_end],
             poses_right_hand=poses[:, i_left_hand_end:i_right_hand_end],
             smpl_layer=smpl_layer,
             betas=body_data["betas"][np.newaxis],
@@ -307,10 +321,11 @@ class SMPLSequence(Node):
     def from_npz(cls, file: Union[IO, str], smpl_layer: SMPLLayer = None, **kwargs):
         """Creates a SMPL sequence from a .npz file exported through the 'export' function."""
         if smpl_layer is None:
-            smpl_layer = SMPLLayer(model_type="smplh", gender="neutral")
+            smpl_layer = SMPLLayer(model_type="smplx", gender="neutral")
 
         data = np.load(file)
 
+        # TODO: Hands?
         return cls(
             smpl_layer=smpl_layer,
             poses_body=data["poses_body"],
@@ -325,6 +340,11 @@ class SMPLSequence(Node):
             file,
             poses_body=c2c(self.poses_body),
             poses_root=c2c(self.poses_root),
+            poses_left_hand=c2c(self.poses_left_hand),
+            poses_right_hand=c2c(self.poses_right_hand),
+            poses_jaw=c2c(self.poses_jaw),
+            poses_leye=c2c(self.poses_leye),
+            poses_reye=c2c(self.poses_reye),
             betas=c2c(self.betas),
             trans=c2c(self.trans),
         )
@@ -374,6 +394,16 @@ class SMPLSequence(Node):
             poses_right_hand = (
                 None if self.poses_right_hand is None else self.poses_right_hand[self.current_frame_id][None, :]
             )
+            poses_jaw = (
+                None if self.poses_jaw is None else self.poses_jaw[self.current_frame_id][None, :]
+            )
+            poses_leye = (
+                None if self.poses_leye is None else self.poses_leye[self.current_frame_id][None, :]
+            )
+            poses_reye = (
+                None if self.poses_reye is None else self.poses_reye[self.current_frame_id][None, :]
+            )
+
             trans = self.trans[self.current_frame_id][None, :]
 
             if self.betas.shape[0] == self.n_frames:
@@ -394,6 +424,9 @@ class SMPLSequence(Node):
 
             poses_left_hand = self.poses_left_hand
             poses_right_hand = self.poses_right_hand
+            poses_jaw = self.poses_jaw
+            poses_leye = self.poses_leye
+            poses_reye = self.poses_reye
             trans = self.trans
             betas = self.betas
 
@@ -402,6 +435,9 @@ class SMPLSequence(Node):
             poses_body=poses_body,
             poses_left_hand=poses_left_hand,
             poses_right_hand=poses_right_hand,
+            poses_jaw=poses_jaw,
+            poses_leye=poses_leye,
+            poses_reye=poses_reye,
             betas=betas,
             trans=trans,
         )
